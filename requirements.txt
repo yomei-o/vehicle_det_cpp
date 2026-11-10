@@ -1,0 +1,9 @@
+# Python 側（教師データ作り・学習・推論・C++ との照合）
+# C++ の損失は ultralytics 8.4.104 と項ごとに一致させてある。新しい版は損失が変わっているので固定する。
+ultralytics==8.4.104
+torch
+numpy
+opencv-python
+av
+onnx
+onnxruntime

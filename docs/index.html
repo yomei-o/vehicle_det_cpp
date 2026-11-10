@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>車両検出デモ</title>
+<style>
+:root { --bg: #f6f7f9; --panel: #ffffff; --fg: #1d232b; --muted: #5d6875; --line: #d8dde3; --accent: #1f6feb; --box: #00c8ff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0f1318; --panel: #181e25; --fg: #e3e8ee; --muted: #93a0ae; --line: #2a333d; --accent: #58a6ff; }
+}
+:root[data-theme="dark"] { --bg: #0f1318; --panel: #181e25; --fg: #e3e8ee; --muted: #93a0ae; --line: #2a333d; --accent: #58a6ff; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 system-ui, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+main { max-width: 1320px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.35rem; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 14px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+button, label.btn, select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button:hover, label.btn:hover { border-color: var(--accent); }
+button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+input[type=file] { display: none; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 14px; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+canvas { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; }
+.big { font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.note { color: var(--muted); font-size: 0.85rem; }
+#status { color: var(--muted); font-size: 0.85rem; }
+h2 { font-size: 1rem; margin: 0 0 6px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
+dt { color: var(--muted); }
+dd { margin: 0; text-align: right; }
+</style>
+</head>
+<body>
+<main>
+  <h1>車両検出デモ</h1>
+  <p class="lead">首都高のライブカメラから自動で作った教師データで学習した、小さい車両検出器（yolov8n、1 クラス）です。C++ を WebAssembly にしたもので、ブラウザの中だけで動きます。</p>
+
+  <div class="bar">
+    <button id="bSample" class="on">首都高 竹橋JCT（60 秒）</button>
+    <label class="btn">動画・画像を開く<input type="file" id="file" accept="video/*,image/*"></label>
+    <button id="bScreen">画面共有</button>
+    <button id="bPlay">一時停止</button>
+    <select id="model">
+      <option value="models/vehicle_det.onnx">精度優先 960×544</option>
+      <option value="models/vehicle_det_640.onnx">速さ優先 640×352</option>
+    </select>
+    <span id="status">読み込み中…</span>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <canvas id="view" width="1280" height="720"></canvas>
+      <p class="note">水色の枠が検出した車です。1 フレームの検出に 1〜数秒かかるので、表示しているのは「最後に検出したフレーム」とその枠です（動画は裏で進み、検出が終わるたびに次のフレームを取ります）。</p>
+    </div>
+    <div>
+      <div class="panel">
+        <h2>検出した台数</h2>
+        <div class="big" id="count">–</div>
+        <dl>
+          <dt>1 フレームの計算</dt><dd id="ms">–</dd>
+          <dt>モデルの入力</dt><dd id="insz">–</dd>
+          <dt>しきい値</dt><dd><input type="range" id="conf" min="0.05" max="0.9" step="0.05" value="0.25" style="width:110px;vertical-align:middle"> <span id="confv">0.25</span></dd>
+        </dl>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h2>このモデルについて</h2>
+        <p class="note">教師は COCO 学習済みの yolo11x（car / motorcycle / bus / truck を 1 クラスにまとめた）。首都高 5 か所のライブ映像 0.5 秒おき 923 枚に教師で枠を付け、yolov8n を学習しました。検証用（各録画の最後の 2 割）で、教師の枠に対して mAP50 0.89・mAP50-95 0.77 です。</p>
+        <p class="note">C++（このページと同じコード）と Python（onnxruntime）の検出は、枠の差が中央値 0.05px で一致します。</p>
+      </div>
+    </div>
+  </div>
+  <video id="vid" muted playsinline loop style="display:none"></video>
+</main>
+
+<script>
+const W = 1280, H = 720;
+const view = document.getElementById('view'), ctx = view.getContext('2d', { willReadFrequently: true });
+const vid = document.getElementById('vid');
+const statusEl = document.getElementById('status');
+const grab = document.createElement('canvas'); grab.width = W; grab.height = H;
+const gctx = grab.getContext('2d', { willReadFrequently: true });
+// 検出に回したフレームと、その結果を出しているフレーム（枠と絵がずれないよう、検出した瞬間の絵を出す）
+const pending = document.createElement('canvas'); pending.width = W; pending.height = H;
+const shown = document.createElement('canvas'); shown.width = W; shown.height = H;
+let hasShown = false;
+let worker = null, ready = false, busy = false, boxes = new Float32Array(0), still = null, screenStream = null;
+let conf = 0.25;
+
+function startWorker(url) {
+  ready = false; busy = false;
+  if (worker) worker.terminate();
+  worker = new Worker('worker.js');
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') {
+      ready = m.nodes > 0;
+      document.getElementById('insz').textContent = m.iw + '×' + m.ih;
+      statusEl.textContent = ready ? 'モデル読み込み完了' : 'モデルを読めませんでした';
+      kick();
+    } else if (m.type === 'result') {
+      busy = false;
+      boxes = m.boxes;
+      shown.getContext('2d').drawImage(pending, 0, 0); hasShown = true;
+      document.getElementById('count').textContent = m.n;
+      document.getElementById('ms').textContent = (m.ms / 1000).toFixed(2) + ' 秒';
+      kick();
+    } else if (m.type === 'error') {
+      busy = false; statusEl.textContent = 'エラー: ' + m.text;
+    }
+  };
+  statusEl.textContent = 'モデルを読み込み中…';
+  fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(buf => worker.postMessage({ type: 'init', model: buf }, [buf]))
+    .catch(err => statusEl.textContent = 'モデルを取得できません: ' + err);
+}
+
+// 次のフレームを推論に回す
+function kick() {
+  if (!ready || busy) return;
+  const src = still || vid;
+  if (!still && vid.readyState < 2) return;
+  gctx.drawImage(src, 0, 0, W, H);
+  pending.getContext('2d').drawImage(grab, 0, 0);
+  const px = gctx.getImageData(0, 0, W, H).data.buffer;
+  busy = true;
+  worker.postMessage({ type: 'frame', pixels: px, w: W, h: H, conf }, [px]);
+}
+
+function draw() {
+  if (hasShown) ctx.drawImage(shown, 0, 0);
+  else if (still) ctx.drawImage(still, 0, 0, W, H);
+  else if (vid.readyState >= 2) ctx.drawImage(vid, 0, 0, W, H);
+  ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2;
+  for (let i = 0; i + 4 < boxes.length; i += 5) ctx.strokeRect(boxes[i], boxes[i + 1], boxes[i + 2] - boxes[i], boxes[i + 3] - boxes[i + 1]);
+  if (!busy) kick();
+  requestAnimationFrame(draw);
+}
+
+const bSample = document.getElementById('bSample'), bScreen = document.getElementById('bScreen'), bPlay = document.getElementById('bPlay');
+function setActive(b) { for (const x of [bSample, bScreen]) x.classList.toggle('on', x === b); }
+function stopScreen() { if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; } }
+function playSrc(src) { hasShown = false; still = null; stopScreen(); vid.srcObject = null; vid.src = src; vid.play().catch(() => {}); boxes = new Float32Array(0); }
+bSample.onclick = () => { setActive(bSample); playSrc('takebashi_60s.mp4'); };
+document.getElementById('file').onchange = (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  setActive(null); boxes = new Float32Array(0);
+  if (f.type.startsWith('image/')) {
+    const img = new Image();
+    img.onload = () => { stopScreen(); vid.pause(); still = img; hasShown = false; kick(); };
+    img.src = URL.createObjectURL(f);
+  } else playSrc(URL.createObjectURL(f));
+};
+bScreen.onclick = async () => {
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false });
+    still = null; stopScreen(); screenStream = s; vid.removeAttribute('src'); vid.srcObject = s; await vid.play();
+    setActive(bScreen); boxes = new Float32Array(0);
+    s.getVideoTracks()[0].addEventListener('ended', () => bSample.onclick());
+  } catch (e) { statusEl.textContent = '画面共有はキャンセルされました'; }
+};
+bPlay.onclick = () => { if (vid.paused) { vid.play(); bPlay.textContent = '一時停止'; } else { vid.pause(); bPlay.textContent = '再生'; } };
+document.getElementById('model').onchange = (e) => startWorker(e.target.value);
+const confEl = document.getElementById('conf');
+confEl.oninput = () => { conf = +confEl.value; document.getElementById('confv').textContent = conf.toFixed(2); };
+
+startWorker(document.getElementById('model').value);
+bSample.onclick();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
