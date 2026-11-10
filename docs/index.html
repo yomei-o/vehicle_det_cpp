@@ -37,18 +37,22 @@ dd { margin: 0; text-align: right; }
 <main>
   <h1>車両検出デモ</h1>
   <p class="lead">首都高のライブカメラから自動で作った教師データで学習した、小さい車両検出器（yolov8n、1 クラス）です。C++ を WebAssembly にしたもので、ブラウザの中だけで動きます。</p>
-  <p class="note" style="margin:-8px 0 12px">録画 3 本は学習に使ったカメラの映像です（各録画の最後の 2 割の時間だけが学習に使っていない部分）。初めて見るカメラでの性能は「動画・画像を開く」か「画面共有」で試してください。</p>
+  <p class="note" style="margin:-8px 0 12px">録画はどれも学習に使ったカメラの映像です（各録画の最後の 2 割の時間だけが学習に使っていない部分）。葛西は昼の録画の再配信です。初めて見るカメラでの性能は「動画・画像を開く」か「画面共有」で試してください。</p>
 
   <div class="bar">
     <button id="bSample" class="on" data-src="takebashi_60s.mp4">竹橋JCT</button>
     <button class="sample" data-src="gofukubashi_60s.mp4">呉服橋JCT</button>
     <button class="sample" data-src="kasai_60s.mp4">湾岸線 葛西</button>
+    <button class="sample" data-src="night_takebashi_60s.mp4">夜 竹橋JCT</button>
+    <button class="sample" data-src="night_gofukubashi_60s.mp4">夜 呉服橋JCT</button>
     <label class="btn">動画・画像を開く<input type="file" id="file" accept="video/*,image/*"></label>
     <button id="bScreen">画面共有</button>
     <button id="bPlay">一時停止</button>
     <select id="model">
-      <option value="models/vehicle_det.onnx">精度優先 960×544</option>
-      <option value="models/vehicle_det_640.onnx">速さ優先 640×352</option>
+      <option value="models/vehicle_det_allday.onnx">昼夜モデル 960×544</option>
+      <option value="models/vehicle_det_allday_640.onnx">昼夜モデル 640×352（速い）</option>
+      <option value="models/vehicle_det.onnx">昼だけモデル 960×544</option>
+      <option value="models/vehicle_det_640.onnx">昼だけモデル 640×352（速い）</option>
     </select>
     <span id="status">読み込み中…</span>
   </div>
@@ -70,7 +74,12 @@ dd { margin: 0; text-align: right; }
       </div>
       <div class="panel" style="margin-top:14px">
         <h2>このモデルについて</h2>
-        <p class="note">教師は COCO 学習済みの yolo11x（car / motorcycle / bus / truck を 1 クラスにまとめた）。首都高 5 か所のライブ映像 0.5 秒おき 923 枚に教師で枠を付け、yolov8n を学習しました。検証用（各録画の最後の 2 割）で、教師の枠に対して mAP50 0.89・mAP50-95 0.77 です。</p>
+        <p class="note">教師は COCO 学習済みの yolo11x（car / motorcycle / bus / truck を 1 クラスにまとめた）。首都高のライブ映像を 0.5 秒おきに切り出し、教師で枠を付けて yolov8n を学習しました。</p>
+        <p class="note"><b>昼夜モデル</b>：昼・夕方・夜の 2,289 枚。教師には画像を 2×2 に分けて拡大しても見せた（夜の車列・遠くの車の見落としが減る）。<br>
+        <b>昼だけモデル</b>：昼の 923 枚。夜は車の半分以上を取りこぼします。</p>
+        <p class="note">検証用（各録画の最後の 2 割、タイルありの教師の枠に対する mAP50、960 版）：<br>
+        昼夜モデル　昼 0.92・夕方 0.91・夜 0.86<br>
+        昼だけモデル 昼 0.88・夕方 0.80・夜 0.58</p>
         <p class="note">C++（このページと同じコード）と Python（onnxruntime）の検出は、枠の差が中央値 0.05px で一致します。</p>
       </div>
     </div>
