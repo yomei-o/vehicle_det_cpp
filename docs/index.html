@@ -37,9 +37,12 @@ dd { margin: 0; text-align: right; }
 <main>
   <h1>車両検出デモ</h1>
   <p class="lead">首都高のライブカメラから自動で作った教師データで学習した、小さい車両検出器（yolov8n、1 クラス）です。C++ を WebAssembly にしたもので、ブラウザの中だけで動きます。</p>
+  <p class="note" style="margin:-8px 0 12px">録画 3 本は学習に使ったカメラの映像です（各録画の最後の 2 割の時間だけが学習に使っていない部分）。初めて見るカメラでの性能は「動画・画像を開く」か「画面共有」で試してください。</p>
 
   <div class="bar">
-    <button id="bSample" class="on">首都高 竹橋JCT（60 秒）</button>
+    <button id="bSample" class="on" data-src="takebashi_60s.mp4">竹橋JCT</button>
+    <button class="sample" data-src="gofukubashi_60s.mp4">呉服橋JCT</button>
+    <button class="sample" data-src="kasai_60s.mp4">湾岸線 葛西</button>
     <label class="btn">動画・画像を開く<input type="file" id="file" accept="video/*,image/*"></label>
     <button id="bScreen">画面共有</button>
     <button id="bPlay">一時停止</button>
@@ -140,10 +143,12 @@ function draw() {
 }
 
 const bSample = document.getElementById('bSample'), bScreen = document.getElementById('bScreen'), bPlay = document.getElementById('bPlay');
-function setActive(b) { for (const x of [bSample, bScreen]) x.classList.toggle('on', x === b); }
+const samples = [bSample, ...document.querySelectorAll('button.sample')];
+function setActive(b) { for (const x of [...samples, bScreen]) x.classList.toggle('on', x === b); }
 function stopScreen() { if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; } }
 function playSrc(src) { hasShown = false; still = null; stopScreen(); vid.srcObject = null; vid.src = src; vid.play().catch(() => {}); boxes = new Float32Array(0); }
-bSample.onclick = () => { setActive(bSample); playSrc('takebashi_60s.mp4'); };
+// 首都高の録画（各 60 秒）。竹橋は車が中くらい、呉服橋は高架のランプで車が大きめ、葛西は広い範囲で車が小さい
+for (const b of samples) b.onclick = () => { setActive(b); playSrc(b.dataset.src); };
 document.getElementById('file').onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   setActive(null); boxes = new Float32Array(0);
